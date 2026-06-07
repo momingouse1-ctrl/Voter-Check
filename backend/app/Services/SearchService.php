@@ -52,6 +52,10 @@ class SearchService
 
             if ($mode === 'fuzzy' || $mode === 'partial') {
                 $tokens = $this->normalizer->tokenize($currentNormalized);
+                if (count($tokens) > 1) {
+                    continue;
+                }
+
                 foreach ($tokens as $token) {
                     if (mb_strlen($token) < 3) {
                         continue;
@@ -70,6 +74,10 @@ class SearchService
 
             if ($mode === 'fuzzy') {
                 $tokens = $this->normalizer->tokenize($currentNormalized);
+                if (count($tokens) > 1) {
+                    continue;
+                }
+
                 usort($tokens, fn($a, $b) => mb_strlen($b) - mb_strlen($a));
                 $longestToken = $tokens[0] ?? null;
 
@@ -160,6 +168,9 @@ class SearchService
             'pir' => ["\u{0C2A}\u{0C40}\u{0C30}", "\u{0C2A}\u{0C40}\u{0C30}\u{0C4D}"],
             'jahera' => ["\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C46}\u{0C30}\u{0C3E}"],
             'jahira' => ["\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}"],
+            'zaeera' => ["\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}"],
+            'zaera' => ["\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}"],
+            'zeera' => ["\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}"],
             'zaheera' => ["\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}"],
             'zahera' => ["\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}"],
             'begum' => ["\u{0C2C}\u{0C47}\u{0C17}\u{0C02}", "\u{0C2C}\u{0C46}\u{0C17}\u{0C02}"],
@@ -305,10 +316,16 @@ class SearchService
 
                 $score = $this->romanTokenScore($queryTokens, $romanText);
                 if ($score >= 70) {
+                    $matchedLine = $this->findBestRomanizedLine($page->raw_text ?? '', $queryTokens);
+                    $lineScore = $this->romanTokenScore($queryTokens, $this->romanNormalize($this->teluguToRoman($matchedLine)));
+                    if ($lineScore < 85) {
+                        continue;
+                    }
+
                     $result = $this->buildResult($page, $normalizedQuery);
-                    $result['matched_text'] = $this->findBestRomanizedLine($page->raw_text ?? '', $queryTokens);
+                    $result['matched_text'] = $matchedLine;
                     $result['context'] = $this->extractRomanizedContext($page->raw_text ?? '', $queryTokens);
-                    $result['confidence_score'] = min(95, $score);
+                    $result['confidence_score'] = min(95, $lineScore);
                     $matches[] = $result;
                 }
             }
