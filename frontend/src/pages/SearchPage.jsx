@@ -13,6 +13,60 @@ const MODES = [
   { key: 'exact',   label: 'Exact Match' },
 ];
 
+function VoterReportCard({ result }) {
+  const report = result.voter_report || {};
+  const value = (v, fallback = '-') => (v === null || v === undefined || v === '' ? fallback : v);
+  const acText = report.ac_name || report.ac_number;
+  const pollingText = report.polling_station_name || report.pdf_name || result.pdf_name;
+
+  return (
+    <div className="voter-report-card">
+      <div className="voter-report-grid">
+        <div className="voter-report-cell sr">
+          <div className="voter-report-label accent">Sr No</div>
+          <div className="voter-report-value">{value(report.sr_no)}</div>
+        </div>
+        <div className="voter-report-cell name">
+          <div className="voter-report-label">Elector Full Name</div>
+          <div className="voter-report-value telugu">{value(report.elector_full_name, result.matched_text || '-')}</div>
+        </div>
+        <div className="voter-report-cell age">
+          <div className="voter-report-label">Age</div>
+          <div className="voter-report-value">{value(report.age)}</div>
+        </div>
+        <div className="voter-report-cell relative-name">
+          <div className="voter-report-label">Relative Full Name</div>
+          <div className="voter-report-value telugu">{value(report.relative_full_name)}</div>
+        </div>
+        <div className="voter-report-cell relative-type">
+          <div className="voter-report-label">Relative Type</div>
+          <div className="voter-report-value">{value(report.relative_type)}</div>
+        </div>
+        <div className="voter-report-cell state">
+          <div className="voter-report-label">State</div>
+          <div className="voter-report-value">{value(report.state, 'Andhra Pradesh')}</div>
+        </div>
+        <div className="voter-report-cell district">
+          <div className="voter-report-label">District</div>
+          <div className="voter-report-value">{value(report.district)}</div>
+        </div>
+        <div className="voter-report-cell ac">
+          <div className="voter-report-label">Enter AC number and name</div>
+          <div className="voter-report-value">{value(acText)}</div>
+        </div>
+        <div className="voter-report-cell polling">
+          <div className="voter-report-label">Polling Station No. and Name</div>
+          <div className="voter-report-value">{value(pollingText)}</div>
+        </div>
+        <div className="voter-report-cell part">
+          <div className="voter-report-label accent">Part Serial No.</div>
+          <div className="voter-report-value">{value(report.part_serial_no || report.sr_no)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SearchPage() {
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState('fuzzy');
@@ -51,7 +105,20 @@ export default function SearchPage() {
   };
 
   const copyResult = (r) => {
-    const text = `PDF: ${r.pdf_name}\nPage: ${r.page_number}\nMatched: ${r.matched_text}\nContext:\n${r.context}`;
+    const report = r.voter_report || {};
+    const text = [
+      `Sr No: ${report.sr_no || '-'}`,
+      `Part Serial No: ${report.part_serial_no || report.sr_no || '-'}`,
+      `Elector Full Name: ${report.elector_full_name || r.matched_text || '-'}`,
+      `Age: ${report.age || '-'}`,
+      `Relative Full Name: ${report.relative_full_name || '-'}`,
+      `Relative Type: ${report.relative_type || '-'}`,
+      `AC: ${report.ac_name || report.ac_number || '-'}`,
+      `Polling Station: ${report.polling_station_name || '-'}`,
+      `PDF: ${r.pdf_name}`,
+      `Page: ${r.page_number}`,
+      `Context:\n${r.context || '-'}`,
+    ].join('\n');
     navigator.clipboard.writeText(text);
     setCopied(r.page_id);
     setTimeout(() => setCopied(null), 2000);
@@ -86,7 +153,7 @@ export default function SearchPage() {
               id="main-search-input"
               type="text"
               className="search-input"
-              placeholder="Enter name, surname, village, father name… (English or Telugu)"
+              placeholder="Enter name, surname, village, father name... (English or Telugu)"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               autoFocus
@@ -160,6 +227,8 @@ export default function SearchPage() {
                   </div>
                 </div>
 
+                <VoterReportCard result={r} />
+
                 {r.context && (
                   <div className="result-context">{r.context}</div>
                 )}
@@ -190,7 +259,7 @@ export default function SearchPage() {
                 </div>
 
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
-                  📄 Open page <strong>{r.page_number}</strong> in <strong>{r.pdf_name}</strong>
+                  Open page <strong>{r.page_number}</strong> in <strong>{r.pdf_name}</strong>
                 </div>
               </div>
             ))

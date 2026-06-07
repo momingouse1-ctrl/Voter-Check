@@ -308,6 +308,7 @@ class SearchService
                     $result = $this->buildResult($page, $normalizedQuery);
                     $result['matched_text'] = $this->findBestRomanizedLine($page->raw_text ?? '', $queryTokens);
                     $result['context'] = $this->extractRomanizedContext($page->raw_text ?? '', $queryTokens);
+                    $result['voter_report'] = $this->buildVoterReport($page, $result['matched_text'], $result['context']);
                     $result['confidence_score'] = min(95, $score);
                     $matches[] = $result;
                 }
@@ -413,17 +414,156 @@ class SearchService
     {
         $doc = $page->pdfDocument;
         $context = $this->extractContext($page->raw_text ?? '', $query);
+        $matchedText = $this->findMatchedLine($page->raw_text ?? $page->normalized_text ?? '', $query);
 
         return [
             'pdf_id' => $doc->id,
             'pdf_name' => $doc->original_name,
             'page_number' => $page->page_number,
-            'matched_text' => $this->findMatchedLine($page->raw_text ?? $page->normalized_text ?? '', $query),
+            'matched_text' => $matchedText,
             'context' => $context,
+            'voter_report' => $this->buildVoterReport($page, $matchedText, $context),
             'confidence' => 'medium',
             'confidence_score' => 60,
             'page_id' => $page->id,
         ];
+    }
+
+    protected function buildVoterReport(PdfPage $page, string $matchedText, string $context): array
+    {
+        $doc = $page->pdfDocument;
+        $row = $this->pickVoterRow($matchedText, $context);
+        $parsed = $this->parseVoterRow($row);
+        $partNo = $this->extractPartNumber($doc->original_name);
+        $acNo = $this->extractAcNumber($doc->original_name);
+        $header = $this->extractHeaderDetails($page);
+        $acName = $header['ac_name'] ?? 'Kadapa';
+        $district = $header['district'] ?? 'Kadapa';
+        $pollingStationName = $header['polling_station_name'] ?? $doc->original_name;
+
+        return [
+            'sr_no' => $parsed['sr_no'] ?? null,
+            'part_serial_no' => $parsed['sr_no'] ?? null,
+            'house_no' => $parsed['house_no'] ?? null,
+            'elector_full_name' => $parsed['elector_full_name'] ?? trim($matchedText),
+            'relative_full_name' => $parsed['relative_full_name'] ?? null,
+            'relative_type' => $parsed['relative_type'] ?? null,
+            'age' => $parsed['age'] ?? null,
+            'gender' => $parsed['gender'] ?? null,
+            'epic_no' => $parsed['epic_no'] ?? null,
+            'state' => 'Andhra Pradesh',
+            'district' => $district,
+            'ac_number' => $acNo,
+            'ac_name' => $acNo ? ($acNo . ' - ' . $acName) : $acName,
+            'polling_station_no' => $partNo,
+            'polling_station_name' => $partNo ? ($partNo . ' - ' . $pollingStationName) : $pollingStationName,
+            'pdf_name' => $doc->original_name,
+            'page_number' => $page->page_number,
+            'raw_row' => $row,
+        ];
+    }
+
+    protected function extractHeaderDetails(PdfPage $page): array
+    {
+        $firstPage = $page->page_number === 1
+            ? $page
+            : PdfPage::where('pdf_document_id', $page->pdf_document_id)->where('page_number', 1)->first();
+
+        $text = preg_replace('/\s+/u', ' ', trim($firstPage->raw_text ?? ''));
+        if ($text === '') {
+            return [];
+        }
+
+        $details = [];
+
+        if (preg_match('/శాసనసభ నియోజకవర్గం పేరు\s*:\s*(.*?)\s+పేరు\s*:\s*(.*?)\s+భాగం/u', $text, $m)) {
+            $details['ac_name'] = trim($m[1]);
+            $details['district'] = trim($m[2]);
+        }
+
+        if (preg_match('/పోలింగ్‌?\s*కేంద్రం\s*పేరు\s*:\s*(.*?)\s+పోలింగ్/u', $text, $m)) {
+            $details['polling_station_name'] = trim($m[1]);
+        }
+
+        return $details;
+    }
+
+    protected function pickVoterRow(string $matchedText, string $context): string
+    {
+        foreach ([$matchedText, ...preg_split('/\n/u', $context)] as $line) {
+            $line = trim((string) $line);
+            if (preg_match('/^\d{1,5}\s+\S+\s+/u', $line) && preg_match('/\b[A-Z]{2}\d{8,}\b/u', $line)) {
+                return $line;
+            }
+        }
+
+        return trim($matchedText);
+    }
+
+    protected function parseVoterRow(string $row): array
+    {
+        $row = preg_replace('/\s+/u', ' ', trim($row));
+        $result = [];
+
+        if (!preg_match('/^(\d{1,5})\s+([^\s]+)\s+(.+?)\s+(\d{1,3})\s+([A-Z]{2}\d{8,})$/u', $row, $m)) {
+            return $result;
+        }
+
+        $result['sr_no'] = $m[1];
+        $result['house_no'] = $m[2];
+        $middle = trim($m[3]);
+        $result['age'] = $m[4];
+        $result['epic_no'] = $m[5];
+
+        $markers = [
+            'తం' => 'Father',
+            'త' => 'Mother',
+            'భ' => 'Husband',
+            'Father' => 'Father',
+            'Mother' => 'Mother',
+            'Husband' => 'Husband',
+        ];
+        $genderTokens = ['పు', 'పురుషుడు', 'స్త్రీ', 'స్రీ', 'స్త్రి', 'F', 'M', '3'];
+
+        $relationPattern = implode('|', array_map(fn($v) => preg_quote($v, '/'), array_keys($markers)));
+        $genderPattern = implode('|', array_map(fn($v) => preg_quote($v, '/'), $genderTokens));
+
+        if (preg_match('/^(.*?)\s+(' . $relationPattern . ')\s+(.*?)\s+(' . $genderPattern . ')$/u', $middle, $parts)) {
+            $result['elector_full_name'] = trim($parts[1]);
+            $result['relative_type'] = $markers[$parts[2]] ?? $parts[2];
+            $result['relative_full_name'] = trim($parts[3]);
+            $result['gender'] = $this->normalizeGender($parts[4]);
+            return $result;
+        }
+
+        if (preg_match('/^(.*?)\s+(' . $relationPattern . ')\s+(.*)$/u', $middle, $parts)) {
+            $result['elector_full_name'] = trim($parts[1]);
+            $result['relative_type'] = $markers[$parts[2]] ?? $parts[2];
+            $result['relative_full_name'] = trim($parts[3]);
+        } else {
+            $result['elector_full_name'] = $middle;
+        }
+
+        return $result;
+    }
+
+    protected function normalizeGender(string $gender): string
+    {
+        return match ($gender) {
+            'పు', 'పురుషుడు', 'M' => 'Male',
+            'స్త్రీ', 'స్రీ', 'స్త్రి', 'F', '3' => 'Female',
+            default => $gender,
+        };
+    }
+
+    protected function extractPartNumber(string $pdfName): ?string
+    {
+        return preg_match('/_(\d+)\.pdf$/i', $pdfName, $m) ? $m[1] : null;
+    }
+
+    protected function extractAcNumber(string $pdfName): ?string
+    {
+        return preg_match('/S\d+_(\d+)_/i', $pdfName, $m) ? $m[1] : null;
     }
 
     protected function findMatchedLine(string $text, string $query): string
