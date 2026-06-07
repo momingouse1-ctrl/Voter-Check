@@ -29,11 +29,7 @@ class SearchService
         foreach ($queriesToSearch as $currentNormalized) {
             $exactResults = $this->exactSearch($currentNormalized, $pdfIds);
             foreach ($exactResults as $r) {
-                if (!$this->alreadyFound($results, $r)) {
-                    $r['confidence'] = 'exact';
-                    $r['confidence_score'] = 100;
-                    $results->push($r);
-                }
+                $this->addOrUpgradeResult($results, $r, 'exact', 100);
             }
 
             if ($mode !== 'exact') {
@@ -41,11 +37,7 @@ class SearchService
                 if (count($tokens) > 1) {
                     $tokenResults = $this->tokenSearch($tokens, $pdfIds);
                     foreach ($tokenResults as $r) {
-                        if (!$this->alreadyFound($results, $r)) {
-                            $r['confidence'] = 'high';
-                            $r['confidence_score'] = 80;
-                            $results->push($r);
-                        }
+                        $this->addOrUpgradeResult($results, $r, 'high', 80);
                     }
                 }
             }
@@ -63,11 +55,12 @@ class SearchService
 
                     $partialResults = $this->partialSearch($token, $pdfIds);
                     foreach ($partialResults as $r) {
-                        if (!$this->alreadyFound($results, $r)) {
-                            $r['confidence'] = count($tokens) === 1 ? 'high' : 'medium';
-                            $r['confidence_score'] = count($tokens) === 1 ? 80 : 60;
-                            $results->push($r);
-                        }
+                        $this->addOrUpgradeResult(
+                            $results,
+                            $r,
+                            count($tokens) === 1 ? 'high' : 'medium',
+                            count($tokens) === 1 ? 80 : 60
+                        );
                     }
                 }
             }
@@ -84,11 +77,7 @@ class SearchService
                 if ($longestToken && mb_strlen($longestToken) >= 4) {
                     $fuzzyResults = $this->fuzzySearch($longestToken, $currentNormalized, $pdfIds);
                     foreach ($fuzzyResults as $r) {
-                        if (!$this->alreadyFound($results, $r)) {
-                            $r['confidence'] = 'low';
-                            $r['confidence_score'] = 40;
-                            $results->push($r);
-                        }
+                        $this->addOrUpgradeResult($results, $r, 'low', 40);
                     }
                 }
             }
@@ -96,11 +85,7 @@ class SearchService
 
         if ($this->isRomanQuery($query) && ($mode === 'fuzzy' || $mode === 'partial')) {
             foreach ($this->romanizedTeluguSearch($normalized, $pdfIds) as $r) {
-                if (!$this->alreadyFound($results, $r)) {
-                    $r['confidence'] = 'high';
-                    $r['confidence_score'] = 85;
-                    $results->push($r);
-                }
+                $this->addOrUpgradeResult($results, $r, 'high', 85);
             }
         }
 
@@ -159,6 +144,35 @@ class SearchService
         }
 
         return false;
+    }
+
+    protected function addOrUpgradeResult(Collection $results, array $candidate, string $confidence, int $score): void
+    {
+        $candidate['confidence'] = $confidence;
+        $candidate['confidence_score'] = $score;
+
+        foreach ($results as $index => $existing) {
+            if ($existing['pdf_id'] !== $candidate['pdf_id'] || $existing['page_number'] !== $candidate['page_number']) {
+                continue;
+            }
+
+            $existingScore = (int) ($existing['confidence_score'] ?? 0);
+            $existingHasRow = $this->isLikelyVoterRow($existing['matched_text'] ?? '');
+            $candidateHasRow = $this->isLikelyVoterRow($candidate['matched_text'] ?? '');
+
+            if ($score > $existingScore || (!$existingHasRow && $candidateHasRow)) {
+                $results->put($index, $candidate);
+            }
+
+            return;
+        }
+
+        $results->push($candidate);
+    }
+
+    protected function isLikelyVoterRow(string $line): bool
+    {
+        return preg_match('/^\s*\d{1,5}\s+\S+/u', $line) === 1;
     }
 
     protected function lineContainsAllTokens(string $normalizedLine, array $tokens): bool
@@ -226,9 +240,18 @@ class SearchService
             'mohammad' => ["\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}", "\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}", "\u{0C2E}\u{0C4A}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}"],
             'mahammed' => ["\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}", "\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}"],
             'mahammad' => ["\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}", "\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}"],
+            'gouse' => ["\u{0C17}\u{0C4C}\u{0C38}\u{0C4D}", "\u{0C17}\u{0C4C}\u{0C38}\u{0C4D}\u{0C38}", "\u{0C17}\u{0C4C}\u{0C38}\u{0C41}"],
+            'ghouse' => ["\u{0C17}\u{0C4C}\u{0C38}\u{0C4D}", "\u{0C17}\u{0C4C}\u{0C38}\u{0C4D}\u{0C38}", "\u{0C17}\u{0C4C}\u{0C38}\u{0C41}"],
+            'gaus' => ["\u{0C17}\u{0C4C}\u{0C38}\u{0C4D}", "\u{0C17}\u{0C4C}\u{0C38}\u{0C4D}\u{0C38}"],
             'saab' => ["\u{0C38}\u{0C3E}\u{0C2C}", "\u{0C38}\u{0C3E}\u{0C2C}\u{0C4D}", "\u{0C38}\u{0C3E}\u{0C39}\u{0C46}\u{0C2C}\u{0C4D}"],
             'sab' => ["\u{0C38}\u{0C3E}\u{0C2C}", "\u{0C38}\u{0C3E}\u{0C2C}\u{0C4D}"],
             'sahab' => ["\u{0C38}\u{0C3E}\u{0C39}\u{0C46}\u{0C2C}\u{0C4D}", "\u{0C38}\u{0C3E}\u{0C2C}\u{0C4D}"],
+            'saleema' => ["\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}"],
+            'salima' => ["\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}"],
+            'saleemabee' => ["\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E}\u{0C2C}\u{0C40}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E} \u{0C2C}\u{0C40}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C2C}\u{0C40}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}"],
+            'salimabee' => ["\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E}\u{0C2C}\u{0C40}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E} \u{0C2C}\u{0C40}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C2C}\u{0C40}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}\u{0C3E}", "\u{0C38}\u{0C32}\u{0C40}\u{0C2E}"],
+            'bee' => ["\u{0C2C}\u{0C40}", "\u{0C2C}\u{0C3F}"],
+            'bi' => ["\u{0C2C}\u{0C40}", "\u{0C2C}\u{0C3F}"],
             'jahera' => ["\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C46}\u{0C30}\u{0C3E}"],
             'jahira' => ["\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}"],
             'zaeera' => ["\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}"],
@@ -412,7 +435,11 @@ class SearchService
 
             foreach ($this->normalizer->tokenize($romanText) as $word) {
                 similar_text($token, $word, $pct);
-                if ($pct >= 72 || str_contains($word, $token) || str_contains($token, $word)) {
+                $wordIsUsefulPrefix = mb_strlen($word) >= 4
+                    && mb_strlen($word) >= (int) floor(mb_strlen($token) * 0.65)
+                    && str_contains($token, $word);
+
+                if ($pct >= 72 || str_contains($word, $token) || $wordIsUsefulPrefix) {
                     $hits++;
                     break;
                 }
@@ -429,6 +456,10 @@ class SearchService
 
     protected function teluguToRoman(string $text): string
     {
+        if (preg_match('/[\x{0C00}-\x{0C7F}]/u', $text)) {
+            return $this->transliterateTeluguUtf8($text);
+        }
+
         $replacements = [
             'ÃƒÂ Ã‚Â°Ã¢â‚¬Â¢ÃƒÂ Ã‚Â±Ã‚ÂÃƒÂ Ã‚Â°Ã‚Â·' => 'ksha', 'ÃƒÂ Ã‚Â°Ã‚Â¶ÃƒÂ Ã‚Â±Ã‚ÂÃƒÂ Ã‚Â°Ã‚Â°ÃƒÂ Ã‚Â±Ã¢â€šÂ¬' => 'sri',
             'ÃƒÂ Ã‚Â°Ã¢â‚¬â€œÃƒÂ Ã‚Â°Ã‚Â¾' => 'kha', 'ÃƒÂ Ã‚Â°Ã¢â‚¬â€ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ga', 'ÃƒÂ Ã‚Â°Ã‹Å“ÃƒÂ Ã‚Â°Ã‚Â¾' => 'gha', 'ÃƒÂ Ã‚Â°Ã…Â¡ÃƒÂ Ã‚Â°Ã‚Â¾' => 'cha', 'ÃƒÂ Ã‚Â°Ã…â€œÃƒÂ Ã‚Â°Ã‚Â¾' => 'ja', 'ÃƒÂ Ã‚Â°Ã‚ÂÃƒÂ Ã‚Â°Ã‚Â¾' => 'jha', 'ÃƒÂ Ã‚Â°Ã…Â¸ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ta', 'ÃƒÂ Ã‚Â°Ã‚Â¡ÃƒÂ Ã‚Â°Ã‚Â¾' => 'da', 'ÃƒÂ Ã‚Â°Ã‚Â¤ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ta', 'ÃƒÂ Ã‚Â°Ã‚Â¦ÃƒÂ Ã‚Â°Ã‚Â¾' => 'da', 'ÃƒÂ Ã‚Â°Ã‚Â§ÃƒÂ Ã‚Â°Ã‚Â¾' => 'dha', 'ÃƒÂ Ã‚Â°Ã‚Â¨ÃƒÂ Ã‚Â°Ã‚Â¾' => 'na', 'ÃƒÂ Ã‚Â°Ã‚ÂªÃƒÂ Ã‚Â°Ã‚Â¾' => 'pa', 'ÃƒÂ Ã‚Â°Ã‚Â«ÃƒÂ Ã‚Â°Ã‚Â¾' => 'pha', 'ÃƒÂ Ã‚Â°Ã‚Â¬ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ba', 'ÃƒÂ Ã‚Â°Ã‚Â­ÃƒÂ Ã‚Â°Ã‚Â¾' => 'bha', 'ÃƒÂ Ã‚Â°Ã‚Â®ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ma', 'ÃƒÂ Ã‚Â°Ã‚Â¯ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ya', 'ÃƒÂ Ã‚Â°Ã‚Â°ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ra', 'ÃƒÂ Ã‚Â°Ã‚Â²ÃƒÂ Ã‚Â°Ã‚Â¾' => 'la', 'ÃƒÂ Ã‚Â°Ã‚ÂµÃƒÂ Ã‚Â°Ã‚Â¾' => 'va', 'ÃƒÂ Ã‚Â°Ã‚Â¶ÃƒÂ Ã‚Â°Ã‚Â¾' => 'sha', 'ÃƒÂ Ã‚Â°Ã‚Â¸ÃƒÂ Ã‚Â°Ã‚Â¾' => 'sa', 'ÃƒÂ Ã‚Â°Ã‚Â¹ÃƒÂ Ã‚Â°Ã‚Â¾' => 'ha',
@@ -446,6 +477,75 @@ class SearchService
         ];
 
         return str_replace(array_keys($replacements), array_values($replacements), $text);
+    }
+
+    protected function transliterateTeluguUtf8(string $text): string
+    {
+        $consonants = [
+            'క' => 'k', 'ఖ' => 'kh', 'గ' => 'g', 'ఘ' => 'gh', 'ఙ' => 'ng',
+            'చ' => 'ch', 'ఛ' => 'chh', 'జ' => 'j', 'ఝ' => 'jh', 'ఞ' => 'ny',
+            'ట' => 't', 'ఠ' => 'th', 'డ' => 'd', 'ఢ' => 'dh', 'ణ' => 'n',
+            'త' => 't', 'థ' => 'th', 'ద' => 'd', 'ధ' => 'dh', 'న' => 'n',
+            'ప' => 'p', 'ఫ' => 'ph', 'బ' => 'b', 'భ' => 'bh', 'మ' => 'm',
+            'య' => 'y', 'ర' => 'r', 'ఱ' => 'r', 'ల' => 'l', 'ళ' => 'l',
+            'వ' => 'v', 'శ' => 'sh', 'ష' => 'sh', 'స' => 's', 'హ' => 'h',
+        ];
+
+        $vowels = [
+            'అ' => 'a', 'ఆ' => 'aa', 'ఇ' => 'i', 'ఈ' => 'ee', 'ఉ' => 'u', 'ఊ' => 'oo',
+            'ఋ' => 'ru', 'ఎ' => 'e', 'ఏ' => 'e', 'ఐ' => 'ai', 'ఒ' => 'o', 'ఓ' => 'o', 'ఔ' => 'au',
+        ];
+
+        $matras = [
+            'ా' => 'aa', 'ి' => 'i', 'ీ' => 'ee', 'ు' => 'u', 'ూ' => 'oo', 'ృ' => 'ru',
+            'ె' => 'e', 'ే' => 'e', 'ై' => 'ai', 'ొ' => 'o', 'ో' => 'o', 'ౌ' => 'au',
+        ];
+
+        $marks = ['ం' => 'm', 'ః' => 'h', 'ఁ' => 'n'];
+        $virama = '్';
+        $chars = preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY);
+        $out = '';
+
+        for ($i = 0; $i < count($chars); $i++) {
+            $ch = $chars[$i];
+
+            if (isset($vowels[$ch])) {
+                $out .= $vowels[$ch];
+                continue;
+            }
+
+            if (isset($consonants[$ch])) {
+                $next = $chars[$i + 1] ?? '';
+
+                if ($next === $virama) {
+                    $out .= $consonants[$ch];
+                    $i++;
+                    continue;
+                }
+
+                if (isset($matras[$next])) {
+                    $out .= $consonants[$ch] . $matras[$next];
+                    $i++;
+                    continue;
+                }
+
+                $out .= $consonants[$ch] . 'a';
+                continue;
+            }
+
+            if (isset($marks[$ch])) {
+                $out .= $marks[$ch];
+                continue;
+            }
+
+            if (isset($matras[$ch]) || $ch === $virama) {
+                continue;
+            }
+
+            $out .= $ch;
+        }
+
+        return $out;
     }
 
     protected function romanNormalize(string $text): string
