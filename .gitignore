@@ -1,0 +1,38 @@
+# Dependencies
+backend/vendor/
+backend/node_modules/
+frontend/node_modules/
+
+# Build output
+_build/
+backend/public/build/
+backend/public/hot
+backend/dist/
+frontend/dist/
+frontend/dist-ssr/
+
+# Local environment and secrets
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+
+# Local database and generated runtime files
+backend/database/*.sqlite*
+backend/storage/logs/*.log
+backend/storage/framework/cache/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+backend/storage/app/private/*
+backend/storage/app/public/*
+backend/ocr_output.json
+backend/test.py
+backend/test_ocr.py
+backend/test_shell.php
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
