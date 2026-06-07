@@ -777,68 +777,6 @@ tr:hover td { background: #f8fafc; }
   font-family: 'Inter', sans-serif;
 }
 
-.voter-report-card {
-  margin: 16px 0;
-  padding: 10px;
-  background: #fff3a6;
-  border: 1px solid #fde68a;
-  border-radius: 10px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
-}
-
-.voter-report-grid {
-  display: grid;
-  grid-template-columns: 0.8fr 2.4fr 0.75fr;
-  gap: 10px;
-}
-
-.voter-report-cell {
-  min-height: 88px;
-  padding: 14px 16px;
-  background: #ffffff;
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.voter-report-cell.relative-name,
-.voter-report-cell.state,
-.voter-report-cell.polling {
-  grid-column: span 2;
-}
-
-.voter-report-cell.ac {
-  grid-column: 1 / -1;
-}
-
-.voter-report-label {
-  color: #0f766e;
-  font-size: 17px;
-  font-weight: 800;
-  line-height: 1.15;
-  margin-bottom: 10px;
-}
-
-.voter-report-label.accent {
-  color: #9f2445;
-}
-
-.voter-report-value {
-  color: #020617;
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-
-.voter-report-value.telugu {
-  font-family: 'Noto Sans Telugu', 'Gautami', 'Nirmala UI', 'Inter', system-ui, sans-serif;
-  font-size: 26px;
-  line-height: 1.35;
-}
-
 .result-actions {
   display: flex;
   align-items: center;
@@ -1137,15 +1075,4 @@ input:checked + .toggle-slider::before { transform: translateX(18px); }
   .topbar-email { display: none; }
   .search-input-row { flex-direction: column; }
   .search-btn { width: 100%; justify-content: center; }
-  .voter-report-grid { grid-template-columns: 1fr; }
-  .voter-report-cell,
-  .voter-report-cell.relative-name,
-  .voter-report-cell.state,
-  .voter-report-cell.polling,
-  .voter-report-cell.ac {
-    grid-column: auto;
-  }
-  .voter-report-label { font-size: 15px; }
-  .voter-report-value { font-size: 21px; }
-  .voter-report-value.telugu { font-size: 23px; }
 }
