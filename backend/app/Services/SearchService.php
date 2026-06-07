@@ -20,7 +20,7 @@ class SearchService
     /**
      * Main search entry point.
      */
-    public function search(string $query, string $mode = 'fuzzy', ?string $email = null, array $pdfIds = []): array
+    public function search(string $query, string $mode = 'fuzzy', ?string $email = null, array $pdfIds = [], ?string $relativeQuery = null): array
     {
         $normalized = $this->normalizer->normalizeQuery($query);
         $results = collect();
@@ -104,6 +104,12 @@ class SearchService
             }
         }
 
+        $relativeQuery = trim((string) $relativeQuery);
+        if ($relativeQuery !== '') {
+            $relativeVariants = $this->buildQueryVariants($relativeQuery, $this->normalizer->normalizeQuery($relativeQuery));
+            $results = $results->filter(fn($result) => $this->resultMatchesRelative($result, $relativeVariants));
+        }
+
         $sorted = $results->sortByDesc('confidence_score')->values();
 
         SearchLog::create([
@@ -115,9 +121,59 @@ class SearchService
 
         return [
             'query' => $query,
+            'relative_query' => $relativeQuery ?: null,
             'total' => $sorted->count(),
             'results' => $sorted->toArray(),
         ];
+    }
+
+    protected function resultMatchesRelative(array $result, array $relativeVariants): bool
+    {
+        $text = trim((string) ($result['matched_text'] ?? ''));
+        if ($text === '') {
+            $text = trim((string) ($result['context'] ?? ''));
+        }
+
+        if ($text === '') {
+            return false;
+        }
+
+        foreach (preg_split('/\n/u', $text) as $line) {
+            $normalizedLine = $this->normalizer->normalizeQuery($line);
+
+            foreach ($relativeVariants as $variant) {
+                $normalizedVariant = $this->normalizer->normalizeQuery($variant);
+                if ($normalizedVariant === '') {
+                    continue;
+                }
+
+                if (mb_stripos($normalizedLine, $normalizedVariant) !== false) {
+                    return true;
+                }
+
+                $tokens = $this->normalizer->tokenize($normalizedVariant);
+                if (!empty($tokens) && $this->lineContainsAllTokens($normalizedLine, $tokens)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    protected function lineContainsAllTokens(string $normalizedLine, array $tokens): bool
+    {
+        foreach ($tokens as $token) {
+            if (mb_strlen($token) < 2) {
+                continue;
+            }
+
+            if (mb_stripos($normalizedLine, $token) === false) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     protected function buildQueryVariants(string $query, string $normalized): array
@@ -166,6 +222,13 @@ class SearchService
             'khaja' => ["\u{0C16}\u{0C3E}\u{0C1C}\u{0C3E}"],
             'peer' => ["\u{0C2A}\u{0C40}\u{0C30}", "\u{0C2A}\u{0C40}\u{0C30}\u{0C4D}"],
             'pir' => ["\u{0C2A}\u{0C40}\u{0C30}", "\u{0C2A}\u{0C40}\u{0C30}\u{0C4D}"],
+            'mohammed' => ["\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}", "\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}", "\u{0C2E}\u{0C4A}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}"],
+            'mohammad' => ["\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}", "\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}", "\u{0C2E}\u{0C4A}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}"],
+            'mahammed' => ["\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}", "\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}"],
+            'mahammad' => ["\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}", "\u{0C2E}\u{0C39}\u{0C2E}\u{0C4D}\u{0C2E}\u{0C26}\u{0C4D}"],
+            'saab' => ["\u{0C38}\u{0C3E}\u{0C2C}", "\u{0C38}\u{0C3E}\u{0C2C}\u{0C4D}", "\u{0C38}\u{0C3E}\u{0C39}\u{0C46}\u{0C2C}\u{0C4D}"],
+            'sab' => ["\u{0C38}\u{0C3E}\u{0C2C}", "\u{0C38}\u{0C3E}\u{0C2C}\u{0C4D}"],
+            'sahab' => ["\u{0C38}\u{0C3E}\u{0C39}\u{0C46}\u{0C2C}\u{0C4D}", "\u{0C38}\u{0C3E}\u{0C2C}\u{0C4D}"],
             'jahera' => ["\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C46}\u{0C30}\u{0C3E}"],
             'jahira' => ["\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}"],
             'zaeera' => ["\u{0C1C}\u{0C39}\u{0C40}\u{0C30}\u{0C3E}", "\u{0C1C}\u{0C39}\u{0C3F}\u{0C30}\u{0C3E}"],

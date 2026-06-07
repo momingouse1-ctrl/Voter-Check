@@ -15,6 +15,7 @@ const MODES = [
 
 export default function SearchPage() {
   const [query, setQuery] = useState('');
+  const [relativeQuery, setRelativeQuery] = useState('');
   const [mode, setMode] = useState('fuzzy');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -39,7 +40,12 @@ export default function SearchPage() {
     setResults(null);
 
     try {
-      const res = await api.post('/search', { query: q.trim(), mode, email });
+      const res = await api.post('/search', {
+        query: q.trim(),
+        relative_query: relativeQuery.trim() || undefined,
+        mode,
+        email,
+      });
       setResults(res.data);
       // Refresh recent searches
       api.get('/search/recent', { params: { email } }).then((r) => setRecent(r.data));
@@ -86,10 +92,18 @@ export default function SearchPage() {
               id="main-search-input"
               type="text"
               className="search-input"
-              placeholder="Enter name, surname, village, father name… (English or Telugu)"
+              placeholder="Enter voter name, surname, village... (English or Telugu)"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               autoFocus
+            />
+            <input
+              id="relative-search-input"
+              type="text"
+              className="search-input search-input-relative"
+              placeholder="Father / Husband / Wife name (optional)"
+              value={relativeQuery}
+              onChange={(e) => setRelativeQuery(e.target.value)}
             />
             <button
               id="search-submit-btn"
@@ -133,7 +147,7 @@ export default function SearchPage() {
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
               {results.total === 0
                 ? 'No results found'
-                : `Found ${results.total} match${results.total !== 1 ? 'es' : ''} for "${results.query}"`}
+                : `Found ${results.total} match${results.total !== 1 ? 'es' : ''} for "${results.query}"${results.relative_query ? ` with relative "${results.relative_query}"` : ''}`}
             </div>
             {results.total > 0 && (
               <span style={{ fontSize: 13, color: 'var(--muted)' }}>{results.total} result{results.total !== 1 ? 's' : ''}</span>

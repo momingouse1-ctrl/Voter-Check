@@ -19,6 +19,7 @@ class SearchController extends Controller
             'query'   => 'required|string|min:2|max:500',
             'mode'    => 'nullable|in:exact,partial,fuzzy',
             'email'   => 'nullable|email',
+            'relative_query' => 'nullable|string|min:2|max:500',
             'pdf_ids' => 'nullable|array',
             'pdf_ids.*' => 'integer',
         ]);
@@ -26,9 +27,10 @@ class SearchController extends Controller
         $query  = $request->input('query');
         $mode   = $request->input('mode', 'fuzzy');
         $email  = $request->input('email');
+        $relativeQuery = $request->input('relative_query');
         $pdfIds = $request->input('pdf_ids', []);
 
-        $results = $this->searchService->search($query, $mode, $email, $pdfIds);
+        $results = $this->searchService->search($query, $mode, $email, $pdfIds, $relativeQuery);
 
         return response()->json($results);
     }
