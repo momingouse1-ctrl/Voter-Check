@@ -30,6 +30,7 @@ backend/ocr_output.json
 backend/test.py
 backend/test_ocr.py
 backend/test_shell.php
+*.xlsx
 
 # OS/editor files
 .DS_Store

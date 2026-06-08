@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\PdfPage;
 use App\Models\SearchLog;
+use App\Models\VoterRecord;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -11,10 +12,12 @@ use Illuminate\Support\Facades\Log;
 class SearchService
 {
     protected TextNormalizer $normalizer;
+    protected TeluguRomanizer $romanizer;
 
-    public function __construct(TextNormalizer $normalizer)
+    public function __construct(TextNormalizer $normalizer, TeluguRomanizer $romanizer)
     {
         $this->normalizer = $normalizer;
+        $this->romanizer = $romanizer;
     }
 
     /**
@@ -90,6 +93,15 @@ class SearchService
         }
 
         $relativeQuery = trim((string) $relativeQuery);
+        foreach ($this->voterRecordSearch($query, $mode, $queriesToSearch, $pdfIds, $relativeQuery) as $r) {
+            $this->addOrUpgradeResult(
+                $results,
+                $r,
+                $r['confidence'] ?? 'high',
+                (int) ($r['confidence_score'] ?? 110)
+            );
+        }
+
         if ($relativeQuery !== '') {
             $relativeVariants = $this->buildQueryVariants($relativeQuery, $this->normalizer->normalizeQuery($relativeQuery));
             $results = $results->filter(fn($result) => $this->resultMatchesRelative($result, $relativeVariants));
@@ -114,10 +126,11 @@ class SearchService
 
     protected function resultMatchesRelative(array $result, array $relativeVariants): bool
     {
-        $text = trim((string) ($result['matched_text'] ?? ''));
-        if ($text === '') {
-            $text = trim((string) ($result['context'] ?? ''));
-        }
+        $text = trim(implode("\n", array_filter([
+            (string) ($result['relative_text'] ?? ''),
+            (string) ($result['matched_text'] ?? ''),
+            (string) ($result['context'] ?? ''),
+        ], fn($value) => trim($value) !== '')));
 
         if ($text === '') {
             return false;
@@ -140,6 +153,13 @@ class SearchService
                 if (!empty($tokens) && $this->lineContainsAllTokens($normalizedLine, $tokens)) {
                     return true;
                 }
+
+                if ($this->isRomanQuery($normalizedVariant)) {
+                    $groups = $this->romanQueryTokenGroups($normalizedVariant);
+                    if (!empty($groups) && $this->romanAliasScore($groups, $normalizedLine) === 100) {
+                        return true;
+                    }
+                }
             }
         }
 
@@ -152,7 +172,7 @@ class SearchService
         $candidate['confidence_score'] = $score;
 
         foreach ($results as $index => $existing) {
-            if ($existing['pdf_id'] !== $candidate['pdf_id'] || $existing['page_number'] !== $candidate['page_number']) {
+            if ($this->resultKey($existing) !== $this->resultKey($candidate)) {
                 continue;
             }
 
@@ -168,6 +188,16 @@ class SearchService
         }
 
         $results->push($candidate);
+    }
+
+    protected function resultKey(array $result): string
+    {
+        if (isset($result['result_key'])) {
+            return (string) $result['result_key'];
+        }
+
+        $sourceType = (string) ($result['source_type'] ?? 'pdf');
+        return $sourceType . ':' . ($result['pdf_id'] ?? '') . ':' . ($result['page_number'] ?? '') . ':' . ($result['page_id'] ?? '');
     }
 
     protected function isLikelyVoterRow(string $line): bool
@@ -188,6 +218,320 @@ class SearchService
         }
 
         return true;
+    }
+
+    protected function voterRecordSearch(string $query, string $mode, array $queryVariants, array $pdfIds, string $relativeQuery = ''): array
+    {
+        if (!empty($pdfIds)) {
+            return [];
+        }
+
+        $matches = collect();
+        $relativeVariants = $relativeQuery !== ''
+            ? $this->buildQueryVariants($relativeQuery, $this->normalizer->normalizeQuery($relativeQuery))
+            : [];
+
+        foreach ($queryVariants as $variant) {
+            foreach ($this->voterRecordDirectSearch($variant, $mode) as $record) {
+                if (!$this->voterRecordMatchesRelative($record, $relativeVariants)) {
+                    continue;
+                }
+
+                $score = count($this->normalizer->tokenize($variant)) > 1 ? 125 : 115;
+                $this->addOrUpgradeResult($matches, $this->buildVoterRecordResult($record, 'exact', $score), 'exact', $score);
+            }
+        }
+
+        if ($this->isRomanQuery($query) && ($mode === 'fuzzy' || $mode === 'partial')) {
+            foreach ($this->voterRecordRomanSearch($query, $relativeVariants) as $recordAndScore) {
+                [$record, $score] = $recordAndScore;
+                $this->addOrUpgradeResult($matches, $this->buildVoterRecordResult($record, 'high', $score), 'high', $score);
+            }
+        }
+
+        return $matches->sortByDesc('confidence_score')->take(500)->values()->toArray();
+    }
+
+    protected function voterRecordDirectSearch(string $variant, string $mode): Collection
+    {
+        $variant = $this->normalizer->normalizeQuery($variant);
+        if ($variant === '') {
+            return collect();
+        }
+
+        $tokens = array_values($this->normalizer->tokenize($variant));
+        if (empty($tokens)) {
+            return collect();
+        }
+
+        $query = VoterRecord::query();
+
+        if ($mode === 'exact' && count($tokens) > 1) {
+            $query->where('normalized_text', 'like', '%' . $variant . '%');
+        } else {
+            foreach ($tokens as $token) {
+                $query->where('normalized_text', 'like', '%' . $token . '%');
+            }
+        }
+
+        return $query
+            ->orderBy('part_no')
+            ->orderBy('serial_no')
+            ->limit(500)
+            ->get();
+    }
+
+    protected function voterRecordRomanSearch(string $query, array $relativeVariants = []): array
+    {
+        $groups = $this->romanQueryTokenGroups($query);
+        if (empty($groups)) {
+            return [];
+        }
+
+        $prefixes = array_values(array_unique(array_filter(array_map(
+            fn($token) => mb_substr($token, 0, 3),
+            $groups[0],
+        ), fn($prefix) => mb_strlen($prefix) >= 3)));
+
+        if (empty($prefixes)) {
+            return [];
+        }
+
+        $matches = [];
+        VoterRecord::query()
+            ->where(function ($q) use ($prefixes) {
+                foreach ($prefixes as $prefix) {
+                    $q->orWhere('romanized_text', 'like', '%' . $prefix . '%');
+                }
+            })
+            ->orderBy('part_no')
+            ->orderBy('serial_no')
+            ->chunk(1000, function ($records) use (&$matches, $groups, $relativeVariants) {
+                foreach ($records as $record) {
+                    $score = $this->romanAliasScore($groups, (string) $record->romanized_text);
+                    $threshold = count($groups) > 1 ? 78 : 72;
+                    if ($score >= $threshold) {
+                        if (!$this->voterRecordMatchesRelative($record, $relativeVariants)) {
+                            continue;
+                        }
+
+                        $matches[] = [$record, min(120, $score + 15)];
+                    }
+
+                    if (count($matches) >= 500) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+        usort($matches, fn($a, $b) => $b[1] <=> $a[1]);
+
+        return $matches;
+    }
+
+    protected function voterRecordMatchesRelative(VoterRecord $record, array $relativeVariants): bool
+    {
+        if (empty($relativeVariants)) {
+            return true;
+        }
+
+        $relativeRoman = $this->romanizer->normalize((string) $record->relative_name);
+        $relativeText = trim((string) $record->relative_name . ' ' . $relativeRoman . ' ' . $this->romanAliasesFromText($relativeRoman));
+        if ($relativeText === '') {
+            return false;
+        }
+
+        $normalizedLine = $this->normalizer->normalizeQuery($relativeText);
+        foreach ($relativeVariants as $variant) {
+            $normalizedVariant = $this->normalizer->normalizeQuery($variant);
+            if ($normalizedVariant === '') {
+                continue;
+            }
+
+            if (mb_stripos($normalizedLine, $normalizedVariant) !== false) {
+                return true;
+            }
+
+            $tokens = $this->normalizer->tokenize($normalizedVariant);
+            if (!empty($tokens) && $this->lineContainsAllTokens($normalizedLine, $tokens)) {
+                return true;
+            }
+
+            if ($this->isRomanQuery($normalizedVariant)) {
+                $groups = $this->romanQueryTokenGroups($normalizedVariant);
+                if (!empty($groups) && $this->romanAliasScore($groups, $normalizedLine) === 100) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    protected function romanQueryTokenGroups(string $query): array
+    {
+        $normalized = $this->romanNormalize($query);
+        $tokens = array_values($this->normalizer->tokenize($normalized));
+        $groups = [];
+
+        foreach ($tokens as $token) {
+            $aliases = $this->romanTokenAliases($token);
+            if (!empty($aliases)) {
+                $groups[] = $aliases;
+            }
+        }
+
+        return $groups;
+    }
+
+    protected function romanTokenAliases(string $token): array
+    {
+        $token = $this->romanNormalize($token);
+        if ($token === '' || mb_strlen($token) < 2) {
+            return [];
+        }
+
+        $aliases = [$token];
+        $aliases[] = str_replace(['ee', 'oo'], ['i', 'u'], $token);
+        $aliases[] = str_replace(['i', 'u'], ['ee', 'oo'], $token);
+
+        $common = [
+            'shaik' => ['shaik', 'sheik', 'sheikh', 'shaikh', 'shek'],
+            'sheik' => ['shaik', 'sheik', 'sheikh', 'shaikh', 'shek'],
+            'sheikh' => ['shaik', 'sheik', 'sheikh', 'shaikh', 'shek'],
+            'shaikh' => ['shaik', 'sheik', 'sheikh', 'shaikh', 'shek'],
+            'mohammed' => ['mohammed', 'mohammad', 'mahammed', 'mahammad', 'muhammad', 'mahammad'],
+            'mohammad' => ['mohammed', 'mohammad', 'mahammed', 'mahammad', 'muhammad', 'mahammad'],
+            'mahammed' => ['mohammed', 'mohammad', 'mahammed', 'mahammad', 'muhammad', 'mahammad'],
+            'mahammad' => ['mohammed', 'mohammad', 'mahammed', 'mahammad', 'muhammad', 'mahammad'],
+            'gouse' => ['gouse', 'ghouse', 'gous', 'gaus', 'gousu', 'gars', 'garsu', 'gavs'],
+            'ghouse' => ['gouse', 'ghouse', 'gous', 'gaus', 'gousu', 'gars', 'garsu', 'gavs'],
+            'gous' => ['gouse', 'ghouse', 'gous', 'gaus', 'gousu', 'gars', 'garsu', 'gavs'],
+            'gaus' => ['gouse', 'ghouse', 'gous', 'gaus', 'gousu', 'gars', 'garsu', 'gavs'],
+            'gars' => ['gouse', 'ghouse', 'gous', 'gaus', 'gousu', 'gars', 'garsu', 'gavs'],
+            'garsu' => ['gouse', 'ghouse', 'gous', 'gaus', 'gousu', 'gars', 'garsu', 'gavs'],
+            'gavs' => ['gouse', 'ghouse', 'gous', 'gaus', 'gousu', 'gars', 'garsu', 'gavs'],
+            'gandluru' => ['gandluru', 'gandlur', 'gamdluru', 'gamdlur'],
+            'gandlur' => ['gandluru', 'gandlur', 'gamdluru', 'gamdlur'],
+            'gamdluru' => ['gandluru', 'gandlur', 'gamdluru', 'gamdlur'],
+            'gamdlur' => ['gandluru', 'gandlur', 'gamdluru', 'gamdlur'],
+            'zaeera' => ['zaeera', 'zaera', 'zahera', 'zaheera', 'jahira', 'jahera', 'jaheera'],
+            'zaera' => ['zaeera', 'zaera', 'zahera', 'zaheera', 'jahira', 'jahera', 'jaheera'],
+            'zahera' => ['zaeera', 'zaera', 'zahera', 'zaheera', 'jahira', 'jahera', 'jaheera'],
+            'zaheera' => ['zaeera', 'zaera', 'zahera', 'zaheera', 'jahira', 'jahera', 'jaheera'],
+            'jahira' => ['zaeera', 'zaera', 'zahera', 'zaheera', 'jahira', 'jahera', 'jaheera'],
+            'jahera' => ['zaeera', 'zaera', 'zahera', 'zaheera', 'jahira', 'jahera', 'jaheera'],
+            'jaheera' => ['zaeera', 'zaera', 'zahera', 'zaheera', 'jahira', 'jahera', 'jaheera'],
+            'begum' => ['begum', 'begam'],
+            'begam' => ['begum', 'begam'],
+            'mastan' => ['mastan', 'masthan', 'mastaan'],
+        ];
+
+        if (isset($common[$token])) {
+            array_push($aliases, ...$common[$token]);
+        }
+
+        foreach ($common as $needle => $replacements) {
+            if (!str_contains($token, $needle)) {
+                continue;
+            }
+
+            foreach ($replacements as $replacement) {
+                $aliases[] = str_replace($needle, $replacement, $token);
+            }
+        }
+
+        $hasBeeSuffix = false;
+        foreach (['bee', 'bi'] as $suffix) {
+            if (str_ends_with($token, $suffix) && mb_strlen($token) > mb_strlen($suffix) + 2) {
+                $hasBeeSuffix = true;
+                $base = mb_substr($token, 0, -mb_strlen($suffix));
+                array_push($aliases, $base, $base . 'a', $base . 'aa', str_replace('ee', 'i', $base), str_replace('i', 'ee', $base));
+            }
+        }
+
+        if (str_contains($token, 'saleem') || str_contains($token, 'salim')) {
+            array_push($aliases, 'saleema', 'salima');
+            if (!$hasBeeSuffix) {
+                array_push($aliases, 'saleem', 'salim');
+            }
+        }
+
+        if (str_contains($token, 'khasim') || str_contains($token, 'kasim')) {
+            array_push($aliases, 'khasim', 'kasim', 'khasimbee', 'kasimbee');
+        }
+
+        return array_values(array_unique(array_filter($aliases, fn($alias) => mb_strlen($alias) >= 2)));
+    }
+
+    protected function romanAliasScore(array $queryGroups, string $romanText): int
+    {
+        $romanText = $this->romanNormalize($romanText);
+        if ($romanText === '') {
+            return 0;
+        }
+
+        $words = $this->normalizer->tokenize($romanText);
+        $hits = 0;
+
+        foreach ($queryGroups as $aliases) {
+            $matched = false;
+            foreach ($aliases as $alias) {
+                if ($this->romanAliasMatches($alias, $romanText, $words)) {
+                    $matched = true;
+                    break;
+                }
+            }
+
+            if ($matched) {
+                $hits++;
+            }
+        }
+
+        return (int) round(($hits / max(1, count($queryGroups))) * 100);
+    }
+
+    protected function romanAliasMatches(string $alias, string $romanText, array $words): bool
+    {
+        if (mb_strlen($alias) < 2) {
+            return false;
+        }
+
+        if (str_contains($romanText, $alias)) {
+            return true;
+        }
+
+        $foldedAlias = $this->foldRomanVowels($alias);
+        foreach ($words as $word) {
+            if (mb_strlen($word) < 2) {
+                continue;
+            }
+
+            $wordIsUsefulPartOfAlias = str_contains($alias, $word)
+                && mb_strlen($word) >= (int) floor(mb_strlen($alias) * 0.65);
+
+            if (str_contains($word, $alias) || $wordIsUsefulPartOfAlias) {
+                return true;
+            }
+
+            if ($foldedAlias !== '' && $foldedAlias === $this->foldRomanVowels($word)) {
+                return true;
+            }
+
+            similar_text($alias, $word, $pct);
+            if ($pct >= 74) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function foldRomanVowels(string $text): string
+    {
+        return preg_replace('/[aeiou]+/u', '', $this->romanNormalize($text)) ?: '';
     }
 
     protected function buildQueryVariants(string $query, string $normalized): array
@@ -595,6 +939,8 @@ class SearchService
         $context = $this->extractContext($page->raw_text ?? '', $query);
 
         return [
+            'source_type' => 'pdf',
+            'result_key' => 'pdf:' . $doc->id . ':' . $page->page_number,
             'pdf_id' => $doc->id,
             'pdf_name' => $doc->original_name,
             'page_number' => $page->page_number,
@@ -604,6 +950,60 @@ class SearchService
             'confidence_score' => 60,
             'page_id' => $page->id,
         ];
+    }
+
+    protected function buildVoterRecordResult(VoterRecord $record, string $confidence, int $score): array
+    {
+        $relativeRoman = $this->romanizer->normalize((string) $record->relative_name);
+        $relativeAliases = $this->romanAliasesFromText($relativeRoman);
+        $matched = trim(implode(' ', array_filter([
+            $record->serial_no,
+            $record->house_no,
+            $record->voter_name,
+            $record->relation_type,
+            $record->relative_name,
+            $record->gender,
+            $record->age,
+            $record->voter_id,
+        ], fn($value) => $value !== null && $value !== '')));
+
+        $context = implode("\n", array_filter([
+            'Name: ' . ($record->voter_name ?: '-'),
+            'Relative (' . ($record->relation ?: $record->relation_type ?: '-') . '): ' . ($record->relative_name ?: '-'),
+            'Part No: ' . ($record->part_no ?: '-') . ' | Serial No: ' . ($record->serial_no ?: '-') . ' | Roll Page: ' . ($record->roll_page_no ?: '-') . ' | PDF Page: ' . ($record->pdf_page ?: '-'),
+            'House No: ' . ($record->house_no ?: '-') . ' | Age: ' . ($record->age ?: '-') . ' | Gender: ' . ($record->gender_english ?: $record->gender ?: '-'),
+            'Voter ID: ' . ($record->voter_id ?: '-'),
+        ]));
+
+        return [
+            'source_type' => 'excel',
+            'result_key' => 'excel:' . $record->id,
+            'record_id' => $record->id,
+            'pdf_id' => null,
+            'pdf_name' => $record->source_file ?: 'Excel Voter Records',
+            'page_number' => $record->pdf_page,
+            'part_no' => $record->part_no,
+            'roll_page_no' => $record->roll_page_no,
+            'serial_no' => $record->serial_no,
+            'source_row' => $record->source_row,
+            'voter_id' => $record->voter_id,
+            'matched_text' => $matched,
+            'relative_text' => trim((string) $record->relative_name . ' ' . $relativeRoman . ' ' . $relativeAliases),
+            'context' => $context,
+            'confidence' => $confidence,
+            'confidence_score' => $score,
+            'page_id' => 'voter-record-' . $record->id,
+        ];
+    }
+
+    protected function romanAliasesFromText(string $text): string
+    {
+        $aliases = [];
+        foreach ($this->normalizer->tokenize($this->romanNormalize($text)) as $token) {
+            array_push($aliases, ...$this->romanTokenAliases($token));
+        }
+
+        return implode(' ', array_values(array_unique($aliases)));
     }
 
     protected function findMatchedLine(string $text, string $query): string

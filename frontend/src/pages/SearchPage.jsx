@@ -3,14 +3,14 @@ import AppLayout from '../components/AppLayout';
 import ConfidenceBadge from '../components/ConfidenceBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
-import { Search, Download, Eye, Copy, ExternalLink, Clock } from 'lucide-react';
+import { Search, Download, Eye, Copy, Clock } from 'lucide-react';
 import api from '../lib/api';
 import { getEmail } from '../lib/auth';
 
 const MODES = [
-  { key: 'fuzzy',   label: 'Fuzzy Search' },
+  { key: 'fuzzy', label: 'Fuzzy Search' },
   { key: 'partial', label: 'Partial Match' },
-  { key: 'exact',   label: 'Exact Match' },
+  { key: 'exact', label: 'Exact Match' },
 ];
 
 export default function SearchPage() {
@@ -47,7 +47,6 @@ export default function SearchPage() {
         email,
       });
       setResults(res.data);
-      // Refresh recent searches
       api.get('/search/recent', { params: { email } }).then((r) => setRecent(r.data));
     } catch (err) {
       setError(err.response?.data?.message || 'Search failed. Please try again.');
@@ -57,7 +56,11 @@ export default function SearchPage() {
   };
 
   const copyResult = (r) => {
-    const text = `PDF: ${r.pdf_name}\nPage: ${r.page_number}\nMatched: ${r.matched_text}\nContext:\n${r.context}`;
+    const isExcel = r.source_type === 'excel';
+    const text = isExcel
+      ? `Excel: ${r.pdf_name}\nPart No: ${r.part_no ?? '-'}\nSerial No: ${r.serial_no ?? '-'}\nPDF Page: ${r.page_number ?? '-'}\nMatched: ${r.matched_text}\nContext:\n${r.context}`
+      : `PDF: ${r.pdf_name}\nPage: ${r.page_number}\nMatched: ${r.matched_text}\nContext:\n${r.context}`;
+
     navigator.clipboard.writeText(text);
     setCopied(r.page_id);
     setTimeout(() => setCopied(null), 2000);
@@ -67,24 +70,22 @@ export default function SearchPage() {
     window.open(`/api/pdfs/${pdfId}/file`, '_blank');
   };
 
-  const downloadPdf = (pdfId, pdfName) => {
+  const downloadPdf = (pdfId) => {
     window.open(`/api/pdfs/${pdfId}/download`, '_blank');
   };
 
   return (
     <AppLayout title="Search Names">
-      {/* Banner */}
       <div className="page-banner purple">
         <div className="banner-content">
           <div className="banner-title">Find Names Instantly</div>
           <div className="banner-subtitle">
-            Search English or Telugu names across all indexed documents. Fuzzy, partial, and exact match supported.
+            Search English or Telugu names across indexed PDFs and Excel voter records. Fuzzy, partial, and exact match supported.
           </div>
         </div>
         <Search size={80} className="banner-icon" />
       </div>
 
-      {/* Search box */}
       <div className="search-box-wrap">
         <form onSubmit={handleSearch}>
           <div className="search-input-row">
@@ -117,7 +118,6 @@ export default function SearchPage() {
             </button>
           </div>
 
-          {/* Filters */}
           <div className="search-filters">
             <span className="filter-label">Mode:</span>
             {MODES.map((m) => (
@@ -137,12 +137,10 @@ export default function SearchPage() {
         {error && <div className="alert alert-error" style={{ marginTop: 12 }}>{error}</div>}
       </div>
 
-      {/* Results */}
-      {loading && <LoadingSpinner large text="Searching across all indexed PDFs..." />}
+      {loading && <LoadingSpinner large text="Searching across indexed PDFs and Excel voter records..." />}
 
       {results && !loading && (
         <div>
-          {/* Summary */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
               {results.total === 0
@@ -161,64 +159,82 @@ export default function SearchPage() {
               subtitle='Try partial spelling or fuzzy search mode. For example, try just the surname like "Gandluru" or "Khajapeer".'
             />
           ) : (
-            results.results.map((r, i) => (
-              <div className="result-card" key={`${r.pdf_id}-${r.page_number}-${i}`}>
-                <div className="result-header">
-                  <div style={{ flex: 1 }}>
-                    <div className="result-meta">
-                      <span className="result-pdf-name">{r.pdf_name}</span>
-                      <span className="result-page">Page {r.page_number}</span>
-                      <ConfidenceBadge confidence={r.confidence} />
+            results.results.map((r, i) => {
+              const isExcel = r.source_type === 'excel';
+
+              return (
+                <div className="result-card" key={r.result_key || r.page_id || `${r.pdf_id}-${r.page_number}-${i}`}>
+                  <div className="result-header">
+                    <div style={{ flex: 1 }}>
+                      <div className="result-meta">
+                        <span className="result-pdf-name">{isExcel ? 'Excel Voter Record' : r.pdf_name}</span>
+                        {isExcel ? (
+                          <>
+                            <span className="result-page">Part {r.part_no ?? '-'}</span>
+                            <span className="result-page">Serial {r.serial_no ?? '-'}</span>
+                          </>
+                        ) : (
+                          <span className="result-page">Page {r.page_number}</span>
+                        )}
+                        <ConfidenceBadge confidence={r.confidence} />
+                      </div>
+                      <div className="result-matched">{r.matched_text || '(see context below)'}</div>
                     </div>
-                    <div className="result-matched">{r.matched_text || '(see context below)'}</div>
+                  </div>
+
+                  {r.context && (
+                    <div className="result-context">{r.context}</div>
+                  )}
+
+                  <div className="result-actions">
+                    {!isExcel && (
+                      <>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => openPdf(r.pdf_id)}
+                          title="View PDF in browser"
+                          id={`view-pdf-${r.pdf_id}-${r.page_number}`}
+                        >
+                          <Eye size={14} /> View PDF
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => downloadPdf(r.pdf_id)}
+                          id={`download-pdf-${r.pdf_id}-${r.page_number}`}
+                        >
+                          <Download size={14} /> Download
+                        </button>
+                      </>
+                    )}
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => copyResult(r)}
+                      id={`copy-result-${r.pdf_id ?? r.record_id}-${r.page_number ?? r.source_row}`}
+                    >
+                      <Copy size={14} /> {copied === r.page_id ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
+                    {isExcel ? (
+                      <>Excel row <strong>{r.source_row}</strong> from <strong>{r.pdf_name}</strong></>
+                    ) : (
+                      <>Open page <strong>{r.page_number}</strong> in <strong>{r.pdf_name}</strong></>
+                    )}
                   </div>
                 </div>
-
-                {r.context && (
-                  <div className="result-context">{r.context}</div>
-                )}
-
-                <div className="result-actions">
-                  <button
-                    className="btn btn-primary btn-sm"
-                    onClick={() => openPdf(r.pdf_id)}
-                    title="View PDF in browser"
-                    id={`view-pdf-${r.pdf_id}-${r.page_number}`}
-                  >
-                    <Eye size={14} /> View PDF
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => downloadPdf(r.pdf_id, r.pdf_name)}
-                    id={`download-pdf-${r.pdf_id}-${r.page_number}`}
-                  >
-                    <Download size={14} /> Download
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => copyResult(r)}
-                    id={`copy-result-${r.pdf_id}-${r.page_number}`}
-                  >
-                    <Copy size={14} /> {copied === r.page_id ? 'Copied!' : 'Copy'}
-                  </button>
-                </div>
-
-                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
-                  📄 Open page <strong>{r.page_number}</strong> in <strong>{r.pdf_name}</strong>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
 
-      {/* No search yet + recent */}
       {!results && !loading && (
         <div>
           <EmptyState
             type="noSearch"
-            title="Search across all indexed PDFs"
-            subtitle="Type a name above. Supports Telugu and English names, partial spellings, and fuzzy matching."
+            title="Search across PDFs and Excel voter records"
+            subtitle="Type a name above. Supports Telugu and English names, relative names, partial spellings, and fuzzy matching."
           />
           {recent.length > 0 && (
             <div className="card" style={{ marginTop: 24 }}>
@@ -232,10 +248,16 @@ export default function SearchPage() {
                     key={s.id}
                     onClick={() => { setQuery(s.query); handleSearch(null, s.query); }}
                     style={{
-                      display: 'block', width: '100%', textAlign: 'left',
-                      padding: '8px 0', borderBottom: '1px solid var(--border)',
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      fontSize: 14, color: 'var(--text)',
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '8px 0',
+                      borderBottom: '1px solid var(--border)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      color: 'var(--text)',
                     }}
                   >
                     <span style={{ color: 'var(--primary)' }}>{s.query}</span>
