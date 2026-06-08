@@ -16,7 +16,7 @@ const navItems = [
   { to: '/settings',   label: 'Settings',       icon: Settings,        adminOnly: true },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ isOpen = false, onClose }) {
   const location = useLocation();
   const navigate = useNavigate();
   const email = getEmail();
@@ -24,11 +24,12 @@ export default function Sidebar() {
 
   const handleLogout = () => {
     clearAuth();
+    onClose?.();
     navigate('/');
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${isOpen ? 'open' : ''}`} aria-label="Primary navigation">
       {/* Logo */}
       <div className="sidebar-logo">
         <div className="sidebar-logo-icon">
@@ -49,6 +50,7 @@ export default function Sidebar() {
               key={to}
               to={to}
               className={`sidebar-link ${active ? 'active' : ''}`}
+              onClick={onClose}
             >
               <Icon size={18} />
               <span>{label}</span>
