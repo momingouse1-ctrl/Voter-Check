@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, CheckCircle, Search, Upload, Zap, Shield } from 'lucide-react';
+import { FileText, CheckCircle, Search, Zap, Shield } from 'lucide-react';
 import { setAuth } from '../lib/auth';
 import api from '../lib/api';
 
@@ -33,21 +33,18 @@ export default function EmailGate() {
   return (
     <div className="email-gate">
       <div className="email-gate-card">
-        {/* Badge */}
         <div className="gate-badge">
           <FileText size={12} />
           PDF Name Finder
         </div>
 
-        {/* Hero text */}
         <h1 className="gate-title">
-          Search <span>500 PDFs</span><br />in Seconds
+          Search <span>Kadapa</span><br />Voter Records
         </h1>
         <p className="gate-subtitle">
-          Upload your PDF voter lists, enter a name, and instantly find the exact PDF and page number — in English or Telugu.
+          Kadapa city voter records are already indexed. Enter a name to find part number, serial number, PDF page, and voter details in English or Telugu.
         </p>
 
-        {/* Form */}
         <form className="gate-form" onSubmit={handleSubmit}>
           <input
             id="email-input"
@@ -65,16 +62,15 @@ export default function EmailGate() {
             className="gate-btn"
             disabled={loading}
           >
-            {loading ? 'Please wait...' : 'Continue →'}
+            {loading ? 'Please wait...' : <>Continue &rarr;</>}
           </button>
         </form>
 
-        {/* Features */}
         <div className="gate-features">
           {[
-            { icon: Upload, text: 'Bulk PDF Upload' },
+            { icon: CheckCircle, text: 'Kadapa Records Ready' },
             { icon: Search, text: 'Smart Name Search' },
-            { icon: Zap,    text: 'Instant Results' },
+            { icon: Zap, text: 'Part & Serial Details' },
             { icon: Shield, text: 'Secure & Private' },
           ].map(({ icon: Icon, text }) => (
             <div className="gate-feature" key={text}>
