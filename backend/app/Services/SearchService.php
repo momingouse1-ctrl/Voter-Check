@@ -23,7 +23,7 @@ class SearchService
     /**
      * Main search entry point.
      */
-    public function search(string $query, string $mode = 'fuzzy', ?string $email = null, array $pdfIds = [], ?string $relativeQuery = null): array
+    public function search(string $query, string $mode = 'fuzzy', ?string $email = null, array $pdfIds = [], ?string $relativeQuery = null, array $geoFilters = []): array
     {
         $normalized = $this->normalizer->normalizeQuery($query);
         $results = collect();
@@ -976,23 +976,33 @@ class SearchService
         ]));
 
         return [
-            'source_type' => 'excel',
-            'result_key' => 'excel:' . $record->id,
-            'record_id' => $record->id,
-            'pdf_id' => null,
-            'pdf_name' => $record->source_file ?: 'Excel Voter Records',
-            'page_number' => $record->pdf_page,
-            'part_no' => $record->part_no,
-            'roll_page_no' => $record->roll_page_no,
-            'serial_no' => $record->serial_no,
-            'source_row' => $record->source_row,
-            'voter_id' => $record->voter_id,
-            'matched_text' => $matched,
-            'relative_text' => trim((string) $record->relative_name . ' ' . $relativeRoman . ' ' . $relativeAliases),
-            'context' => $context,
-            'confidence' => $confidence,
-            'confidence_score' => $score,
-            'page_id' => 'voter-record-' . $record->id,
+            'source_type'     => 'excel',
+            'result_key'      => 'excel:' . $record->id,
+            'record_id'       => $record->id,
+            'pdf_id'          => null,
+            'pdf_name'        => $record->source_file ?: 'Excel Voter Records',
+            'page_number'     => $record->pdf_page,
+            'part_no'         => $record->part_no,
+            'roll_page_no'    => $record->roll_page_no,
+            'serial_no'       => $record->serial_no,
+            'source_row'      => $record->source_row,
+            'voter_id'        => $record->voter_id,
+            'house_no'        => $record->house_no,
+            'voter_name'      => $record->voter_name,
+            'relative_name'   => $record->relative_name,
+            'age'             => $record->age,
+            'gender'          => $record->gender_english ?: $record->gender,
+            'district_id'     => $record->district_id,
+            'city_id'         => $record->city_id,
+            'district_name'   => $record->district?->name_en,
+            'city_name'       => $record->city?->name_en,
+            'assembly_name'   => $record->assembly?->name_en,
+            'matched_text'    => $matched,
+            'relative_text'   => trim((string) $record->relative_name . ' ' . $relativeRoman . ' ' . $relativeAliases),
+            'context'         => $context,
+            'confidence'      => $confidence,
+            'confidence_score'=> $score,
+            'page_id'         => 'voter-record-' . $record->id,
         ];
     }
 
@@ -1074,5 +1084,116 @@ class SearchService
             return $r['pdf_id'] === $candidate['pdf_id']
                 && $r['page_number'] === $candidate['page_number'];
         });
+    }
+
+    // ─── EPIC Search ─────────────────────────────────────────────────────────
+
+    /**
+     * Search voter records by exact EPIC / Voter ID.
+     */
+    public function epicSearch(string $epic, array $geoFilters = []): array
+    {
+        $epic = strtoupper(preg_replace('/\s+/', '', $epic));
+
+        $query = VoterRecord::query()
+            ->with(['district', 'city', 'assembly'])
+            ->where('voter_id', $epic);
+
+        $this->applyGeoFilters($query, $geoFilters);
+
+        return $query->get()->map(function ($record) {
+            return array_merge(
+                $this->buildVoterRecordResult($record, 'exact', 200),
+                ['search_type' => 'epic', 'confidence' => 'exact']
+            );
+        })->toArray();
+    }
+
+    // ─── House Number Search ──────────────────────────────────────────────────
+
+    /**
+     * Search voter records by house number with optional name filter.
+     */
+    public function houseNumberSearch(string $rawHouseNum, array $geoFilters = [], string $nameQuery = '', string $mode = 'partial'): array
+    {
+        $normalizer  = app(\App\Services\HouseNumberNormalizer::class);
+        $normalized  = $normalizer->normalize($rawHouseNum);
+        $variants    = $normalizer->variants($rawHouseNum);
+        $numericParts= $normalizer->numericParts($normalized);
+
+        $results = collect();
+
+        // Exact match on normalized house number
+        $exactQuery = VoterRecord::query()
+            ->with(['district', 'city', 'assembly'])
+            ->where(function ($q) use ($normalized, $variants) {
+                $q->where('house_no_normalized', $normalized);
+                foreach ($variants as $v) {
+                    $q->orWhere('house_no_normalized', $v);
+                }
+            });
+
+        $this->applyGeoFilters($exactQuery, $geoFilters);
+
+        foreach ($exactQuery->limit(200)->get() as $record) {
+            $score = 140;
+            if ($nameQuery && !$this->recordMatchesName($record, $nameQuery)) {
+                $score = 90;
+            }
+            $results->push($this->buildVoterRecordResult($record, 'exact', $score));
+        }
+
+        // Partial match if few exact results
+        if ($results->count() < 10 && !empty($numericParts)) {
+            $partialQuery = VoterRecord::query()
+                ->with(['district', 'city', 'assembly'])
+                ->where(function ($q) use ($numericParts, $normalized) {
+                    foreach ($numericParts as $part) {
+                        $q->orWhere('house_no', 'like', '%' . $part . '%')
+                          ->orWhere('house_no_normalized', 'like', '%' . $part . '%');
+                    }
+                })
+                ->where('house_no_normalized', '!=', $normalized);
+
+            $this->applyGeoFilters($partialQuery, $geoFilters);
+
+            foreach ($partialQuery->limit(100)->get() as $record) {
+                $score = 60;
+                if ($nameQuery && $this->recordMatchesName($record, $nameQuery)) {
+                    $score = 85;
+                }
+                $this->addOrUpgradeResult($results, $this->buildVoterRecordResult($record, 'medium', $score), 'medium', $score);
+            }
+        }
+
+        return $results->sortByDesc('confidence_score')->values()->toArray();
+    }
+
+    protected function recordMatchesName(VoterRecord $record, string $nameQuery): bool
+    {
+        $normalized = $this->normalizer->normalizeQuery($nameQuery);
+        $voterNorm  = $this->normalizer->normalizeQuery((string) $record->voter_name);
+        $relNorm    = $this->normalizer->normalizeQuery((string) $record->relative_name);
+
+        return mb_stripos($voterNorm, $normalized) !== false
+            || mb_stripos($relNorm, $normalized) !== false;
+    }
+
+    // ─── Geography Filter Helper ──────────────────────────────────────────────
+
+    protected function applyGeoFilters($query, array $geoFilters): void
+    {
+        if (!empty($geoFilters['district_id'])) {
+            $query->where('district_id', $geoFilters['district_id']);
+        }
+        if (!empty($geoFilters['city_id'])) {
+            $query->where('city_id', $geoFilters['city_id']);
+        }
+        if (!empty($geoFilters['assembly_id'])) {
+            $query->where('assembly_id', $geoFilters['assembly_id']);
+        }
+        if (!empty($geoFilters['polling_station_id'])) {
+            $query->where('polling_station_id', $geoFilters['polling_station_id']);
+        }
     }
 }

@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PdfDocument extends Model
 {
@@ -15,6 +17,12 @@ class PdfDocument extends Model
         'extraction_method',
         'error_message',
         'uploaded_by_email',
+        'district_id',
+        'city_id',
+        'assembly_id',
+        'polling_station_id',
+        'part_number',
+        'batch_notes',
     ];
 
     protected $casts = [
@@ -22,9 +30,29 @@ class PdfDocument extends Model
         'total_pages' => 'integer',
     ];
 
-    public function pages()
+    public function pages(): HasMany
     {
         return $this->hasMany(PdfPage::class);
+    }
+
+    public function district(): BelongsTo
+    {
+        return $this->belongsTo(District::class);
+    }
+
+    public function city(): BelongsTo
+    {
+        return $this->belongsTo(City::class);
+    }
+
+    public function assembly(): BelongsTo
+    {
+        return $this->belongsTo(Assembly::class);
+    }
+
+    public function pollingStation(): BelongsTo
+    {
+        return $this->belongsTo(PollingStation::class);
     }
 
     public function getFileSizeFormattedAttribute(): string

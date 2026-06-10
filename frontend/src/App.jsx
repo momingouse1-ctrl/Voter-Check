@@ -2,14 +2,16 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { isLoggedIn, isAdminUser } from './lib/auth';
 
-import EmailGate  from './pages/EmailGate';
-import Dashboard  from './pages/Dashboard';
-import UploadPage from './pages/UploadPage';
-import SearchPage from './pages/SearchPage';
-import PdfLibrary from './pages/PdfLibrary';
-import FailedFiles from './pages/FailedFiles';
-import Settings   from './pages/Settings';
-import EmailsPage from './pages/EmailsPage';
+import EmailGate      from './pages/EmailGate';
+import Dashboard      from './pages/Dashboard';
+import UploadPage     from './pages/UploadPage';
+import SearchPage     from './pages/SearchPage';
+import PdfLibrary     from './pages/PdfLibrary';
+import FailedFiles    from './pages/FailedFiles';
+import Settings       from './pages/Settings';
+import EmailsPage     from './pages/EmailsPage';
+import ExcelImportPage from './pages/ExcelImportPage';
+
 
 // Protected route wrapper
 function Protected({ children }) {
@@ -27,7 +29,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<EmailGate />} />
         <Route path="/dashboard" element={<Protected><AdminOnly><Dashboard /></AdminOnly></Protected>} />
-        <Route path="/upload"    element={<Protected><AdminOnly><UploadPage /></AdminOnly></Protected>} />
+        <Route path="/upload"        element={<Protected><AdminOnly><UploadPage /></AdminOnly></Protected>} />
+        <Route path="/excel-import"  element={<Protected><AdminOnly><ExcelImportPage /></AdminOnly></Protected>} />
         <Route path="/search"    element={<Protected><SearchPage /></Protected>} />
         <Route path="/pdfs"      element={<Protected><AdminOnly><PdfLibrary /></AdminOnly></Protected>} />
         <Route path="/failed"    element={<Protected><AdminOnly><FailedFiles /></AdminOnly></Protected>} />

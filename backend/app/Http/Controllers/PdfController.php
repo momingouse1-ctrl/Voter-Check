@@ -18,14 +18,26 @@ class PdfController extends Controller
     public function upload(Request $request)
     {
         $request->validate([
-            'files'   => 'required|array|min:1',
-            'files.*' => 'required|file|mimes:pdf|max:102400', // 100MB per file
-            'email'   => 'nullable|email',
+            'files'              => 'required|array|min:1',
+            'files.*'            => 'required|file|mimes:pdf|max:102400', // 100MB per file
+            'email'              => 'nullable|email',
+            'district_id'        => 'nullable|integer|exists:districts,id',
+            'city_id'            => 'nullable|integer|exists:cities,id',
+            'assembly_id'        => 'nullable|integer|exists:assemblies,id',
+            'polling_station_id' => 'nullable|integer|exists:polling_stations,id',
+            'part_number'        => 'nullable|string|max:50',
+            'batch_notes'        => 'nullable|string|max:1000',
         ]);
 
-        $email     = $request->input('email');
-        $uploaded  = 0;
-        $errors    = [];
+        $email              = $request->input('email');
+        $districtId         = $request->input('district_id');
+        $cityId             = $request->input('city_id');
+        $assemblyId         = $request->input('assembly_id');
+        $pollingStationId   = $request->input('polling_station_id');
+        $partNumber         = $request->input('part_number');
+        $batchNotes         = $request->input('batch_notes');
+        $uploaded           = 0;
+        $errors             = [];
 
         foreach ($request->file('files') as $file) {
             try {
@@ -37,13 +49,19 @@ class PdfController extends Controller
                 // Store file
                 $file->storeAs('pdfs', $storedName);
 
-                // Create DB record
+                // Create DB record with geography metadata
                 $doc = PdfDocument::create([
-                    'original_name'     => $originalName,
-                    'stored_path'       => $storedName,
-                    'file_size'         => $file->getSize(),
-                    'status'            => 'queued',
-                    'uploaded_by_email' => $email,
+                    'original_name'      => $originalName,
+                    'stored_path'        => $storedName,
+                    'file_size'          => $file->getSize(),
+                    'status'             => 'queued',
+                    'uploaded_by_email'  => $email,
+                    'district_id'        => $districtId,
+                    'city_id'            => $cityId,
+                    'assembly_id'        => $assemblyId,
+                    'polling_station_id' => $pollingStationId,
+                    'part_number'        => $partNumber,
+                    'batch_notes'        => $batchNotes,
                 ]);
 
                 // Dispatch processing job

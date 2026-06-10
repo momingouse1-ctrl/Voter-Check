@@ -2,25 +2,26 @@ import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Upload, Search, FileText,
-  AlertTriangle, Settings, LogOut, BookOpen, Mail
+  AlertTriangle, Settings, LogOut, BookOpen, Mail, FileSpreadsheet, Map
 } from 'lucide-react';
 import { getEmail, clearAuth, isAdminUser } from '../lib/auth';
 
 const navItems = [
-  { to: '/dashboard',  label: 'Dashboard',     icon: LayoutDashboard, adminOnly: true },
-  { to: '/upload',     label: 'Upload PDFs',    icon: Upload,          adminOnly: true },
-  { to: '/search',     label: 'Search Names',   icon: Search,          adminOnly: false },
-  { to: '/pdfs',       label: 'PDF Library',    icon: BookOpen,        adminOnly: true },
-  { to: '/emails',     label: 'Emails',         icon: Mail,            adminOnly: true },
-  { to: '/failed',     label: 'Failed Files',   icon: AlertTriangle,   adminOnly: true },
-  { to: '/settings',   label: 'Settings',       icon: Settings,        adminOnly: true },
+  { to: '/dashboard',     label: 'Dashboard',       icon: LayoutDashboard,  adminOnly: true  },
+  { to: '/upload',        label: 'Upload PDFs',      icon: Upload,           adminOnly: true  },
+  { to: '/excel-import',  label: 'Import Excel',     icon: FileSpreadsheet,  adminOnly: true  },
+  { to: '/search',        label: 'Search Records',   icon: Search,           adminOnly: false },
+  { to: '/pdfs',          label: 'PDF Library',      icon: BookOpen,         adminOnly: true  },
+  { to: '/emails',        label: 'Emails',           icon: Mail,             adminOnly: true  },
+  { to: '/failed',        label: 'Failed Files',     icon: AlertTriangle,    adminOnly: true  },
+  { to: '/settings',      label: 'Settings',         icon: Settings,         adminOnly: true  },
 ];
 
 export default function Sidebar({ isOpen = false, onClose }) {
   const location = useLocation();
-  const navigate = useNavigate();
-  const email = getEmail();
-  const isAdmin = isAdminUser();
+  const navigate  = useNavigate();
+  const email     = getEmail();
+  const isAdmin   = isAdminUser();
 
   const handleLogout = () => {
     clearAuth();
@@ -33,11 +34,11 @@ export default function Sidebar({ isOpen = false, onClose }) {
       {/* Logo */}
       <div className="sidebar-logo">
         <div className="sidebar-logo-icon">
-          <FileText size={22} />
+          <Map size={22} />
         </div>
         <div>
-          <div className="sidebar-logo-name">PDF Name Finder</div>
-          <div className="sidebar-logo-sub">Voter List Search</div>
+          <div className="sidebar-logo-name">Voter Search</div>
+          <div className="sidebar-logo-sub">Telugu Records</div>
         </div>
       </div>
 
